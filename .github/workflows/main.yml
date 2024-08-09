@@ -1,107 +1,40 @@
-name: CI/CD Pipeline
+name: Update Table
 
 on:
   push:
     branches:
-      - main  # Adjust this to the branch you want to trigger the workflow on
+      - your-sub-branch
+  pull_request:
+    branches:
+      - your-sub-branch
 
 jobs:
-  tag:
+  generate-table:
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
-
-      - name: Set up Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Create Tag
-        id: new-tag
-        run: |
-          NEW_TAG=v$(date +'%Y%m%d%H%M%S')
-          echo "::set-output name=new-tag::$NEW_TAG"
-          git tag $NEW_TAG
-          git push origin $NEW_TAG
-
-  build-frontend:
-    needs: tag
-    uses: ./.github/workflows/build_test_frontend.yml
-    with:
-      tag: ${{ needs.tag.outputs.new-tag }}
-
-  build-backend:
-    needs: [tag, build-frontend]
-    uses: ./.github/workflows/build_test_backend.yml
-    with:
-      tag: ${{ needs.tag.outputs.new-tag }}
-
-  build-docker:
-    needs: [tag, build-backend]
-    uses: ./.github/workflows/build_docker.yml
-    secrets: inherit
-    with:
-      tag: ${{ needs.tag.outputs.new-tag }}
-      upload: true
-
-  draft-release:
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
-    needs: [tag, build-docker]
-    runs-on: [self-hosted, linux]
-    steps:
-      - name: Create Draft Release
-        uses: softprops/action-gh-release@v1
+        
+      - name: Set up Python
+        uses: actions/setup-python@v2
         with:
-          name: Release ${{ needs.tag.outputs.new-tag }}
-          tag_name: ${{ needs.tag.outputs.new-tag }}
-          body: |
-            ## Info
-            Commit ${{ github.sha }} was deployed to `non-prod`. [See code diff](${{ github.event.compare }}).
-
-            It was initialized by [${{ github.event.sender.login }}](${{ github.event.sender.html_url }}).
-
-            Docker Image: ${{ needs.build-docker.outputs.docker-image }}
-
-            ## How to Promote?
-            In order to promote this to prod, edit the draft and press **"Publish release"**.
-          draft: true
-
-  deploy-non-prod:
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
-    needs: [tag, build-docker]
-    uses: ./.github/workflows/deploy_drekar.yml
-    with:
-      tag: ${{ needs.tag.outputs.new-tag }}
-      docker-image: ${{ needs.build-docker.outputs.docker-image }}
-    secrets: inherit
-
-  generate-and-update-confluence:
-    needs: [tag, build-docker]
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v2
-
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.x'  # Specify the Python version you need
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install atlassian-python-api  # Or use requirements.txt if using Poetry
-
-    - name: Generate supported profiles table
-      run: |
-        python scripts/generate_table.py --print  # Adjust arguments as necessary
-
-    - name: Update Confluence page
-      run: |
-        python scripts/update_confluence.py
-      env:
-        CONFLUENCE_USERNAME: ${{ secrets.CONFLUENCE_USERNAME }}
-        CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
-        CONFLUENCE_PAGE_ID: ${{ secrets.CONFLUENCE_PAGE_ID }}
+          python-version: '3.x'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Generate Table
+        run: |
+          python rfcfg_profiles/create.py --config rfcfg_profiles/config.csv --print > generated_table.txt
+      
+      - name: Update Confluence Page
+        env:
+          CONFLUENCE_URL: ${{ secrets.CONFLUENCE_URL }}
+          CONFLUENCE_USERNAME: ${{ secrets.CONFLUENCE_USERNAME }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          CONFLUENCE_PAGE_ID: ${{ secrets.CONFLUENCE_PAGE_ID }}
+        run: |
+          python scripts/update_confluence.py generated_table.txt
